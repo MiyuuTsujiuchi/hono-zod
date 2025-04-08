@@ -40,6 +40,43 @@ const translateToJapanese = async (text: string) => {
   return response.choices[0].message.content || text;
 };
 
+// ポッドキャスト情報を取得する関数
+async function getPodcastInfo() {
+  // Lex FridmanのポッドキャストRSSフィードを取得
+  const feed = await parser.parseURL('https://lexfridman.com/feed/podcast/');
+  
+  // 最新のエピソードを取得
+  const latestEpisode = PodcastSchema.parse(feed.items[0]);
+
+  // タイトルとコンテンツを日本語に翻訳
+  const [translatedTitle, translatedContent] = await Promise.all([
+    translateToJapanese(latestEpisode.title),
+    translateToJapanese(latestEpisode.content),
+  ]);
+
+  return {
+    title: translatedTitle,
+    content: translatedContent,
+    link: latestEpisode.link,
+    pubDate: latestEpisode.pubDate,
+  };
+}
+
+export async function GET() {
+  try {
+    // 環境変数のチェック
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OpenAI APIキーが設定されていません');
+    }
+
+    const podcastInfo = await getPodcastInfo();
+    return NextResponse.json({ success: true, data: podcastInfo });
+  } catch (error) {
+    console.error('Error:', error);
+    return NextResponse.json({ success: false, error: 'エラーが発生しました' }, { status: 500 });
+  }
+}
+
 export async function POST() {
   try {
     // 環境変数のチェック
@@ -47,17 +84,7 @@ export async function POST() {
       throw new Error('必要な環境変数が設定されていません');
     }
 
-    // Lex FridmanのポッドキャストRSSフィードを取得
-    const feed = await parser.parseURL('https://lexfridman.com/feed/podcast/');
-    
-    // 最新のエピソードを取得
-    const latestEpisode = PodcastSchema.parse(feed.items[0]);
-
-    // タイトルとコンテンツを日本語に翻訳
-    const [translatedTitle, translatedContent] = await Promise.all([
-      translateToJapanese(latestEpisode.title),
-      translateToJapanese(latestEpisode.content),
-    ]);
+    const podcastInfo = await getPodcastInfo();
 
     // Slackクライアントの初期化
     const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
@@ -78,7 +105,7 @@ export async function POST() {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*${translatedTitle}*\n\n${translatedContent}\n\n<${latestEpisode.link}|エピソードを聴く>`
+            text: `*${podcastInfo.title}*\n\n${podcastInfo.content}\n\n<${podcastInfo.link}|エピソードを聴く>`
           }
         },
         {
@@ -86,7 +113,7 @@ export async function POST() {
           elements: [
             {
               type: 'mrkdwn',
-              text: `公開日: ${new Date(latestEpisode.pubDate).toLocaleDateString('ja-JP')}`
+              text: `公開日: ${new Date(podcastInfo.pubDate).toLocaleDateString('ja-JP')}`
             }
           ]
         }
