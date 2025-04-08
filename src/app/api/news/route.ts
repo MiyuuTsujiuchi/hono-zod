@@ -13,14 +13,13 @@ const NewsSchema = z.object({
   publishedAt: z.string(),
 });
 
-// Slack送信のリクエストスキーマ
-const SlackRequestSchema = z.object({
-  channel: z.string(),
-  token: z.string(),
-});
-
 app.post('/', async (c) => {
   try {
+    // 環境変数のチェック
+    if (!process.env.NEWS_API_KEY || !process.env.SLACK_BOT_TOKEN || !process.env.SLACK_CHANNEL_ID) {
+      throw new Error('必要な環境変数が設定されていません');
+    }
+
     // ニュースを取得（例としてNewsAPIを使用）
     const newsResponse = await axios.get('https://newsapi.org/v2/top-headlines', {
       params: {
