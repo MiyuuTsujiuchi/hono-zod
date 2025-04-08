@@ -2,11 +2,17 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import Parser from 'rss-parser';
 import { WebClient } from '@slack/web-api';
+import OpenAI from 'openai';
 
 const app = new Hono();
 
 // RSSフィードのパーサー
 const parser = new Parser();
+
+// OpenAIクライアントの初期化
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 // ポッドキャストエピソードのスキーマ
 const PodcastSchema = z.object({
@@ -16,10 +22,30 @@ const PodcastSchema = z.object({
   pubDate: z.string(),
 });
 
+// テキストを日本語に翻訳する関数
+const translateToJapanese = async (text: string) => {
+  const response = await openai.chat.completions.create({
+    model: "gpt-3.5-turbo",
+    messages: [
+      {
+        role: "system",
+        content: "あなたは優秀な翻訳者です。英語のテキストを自然な日本語に翻訳してください。"
+      },
+      {
+        role: "user",
+        content: `以下のテキストを日本語に翻訳してください：\n\n${text}`
+      }
+    ],
+    temperature: 0.3,
+  });
+
+  return response.choices[0].message.content || text;
+};
+
 app.post('/', async (c) => {
   try {
     // 環境変数のチェック
-    if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_CHANNEL_ID) {
+    if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_CHANNEL_ID || !process.env.OPENAI_API_KEY) {
       throw new Error('必要な環境変数が設定されていません');
     }
 
@@ -29,14 +55,11 @@ app.post('/', async (c) => {
     // 最新のエピソードを取得
     const latestEpisode = PodcastSchema.parse(feed.items[0]);
 
-    // エピソードの説明を日本語に翻訳（ここでは簡易的な翻訳を実装）
-    const translateToJapanese = (text: string) => {
-      // 実際の翻訳APIを使用する場合は、ここでAPIを呼び出す
-      // 例: DeepL API, Google Translate APIなど
-      return `[日本語訳]\n${text}`;
-    };
-
-    const translatedContent = translateToJapanese(latestEpisode.content);
+    // タイトルとコンテンツを日本語に翻訳
+    const [translatedTitle, translatedContent] = await Promise.all([
+      translateToJapanese(latestEpisode.title),
+      translateToJapanese(latestEpisode.content),
+    ]);
 
     // Slackクライアントの初期化
     const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
@@ -57,7 +80,7 @@ app.post('/', async (c) => {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*${latestEpisode.title}*\n\n${translatedContent}\n\n<${latestEpisode.link}|エピソードを聴く>`
+            text: `*${translatedTitle}*\n\n${translatedContent}\n\n<${latestEpisode.link}|エピソードを聴く>`
           }
         },
         {
